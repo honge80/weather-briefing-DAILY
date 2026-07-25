@@ -92,42 +92,41 @@ def fetch_taf(icao_codes):
 
 def parse_weather_text(raw_text):
     """
-    기상 텍스트(METAR/TAF)에서 비(RA), 강풍(>=10KT), 운저고도(<=500FT) 조건 검사
+    METAR/TAF 텍스트에서 비(RA), 강풍(>=10KT), 운저고도(<=500FT) 조건 정밀 검사
     """
     if not raw_text or raw_text == "자료 없음":
         return []
 
     reasons = []
 
-    # 1) RA (비) 포함 여부 (+, -, SHRA, TSRA 등)
-    if re.search(r'\b(?:\+|\-)?(?:[A-Z]*)*RA\b', raw_text):
+    # 1) RA (비) 포함 여부 (+RA, -RA, SHRA, TSRA 등)
+    if re.search(r'(?:\+|\-)?(?:[A-Z]*)*RA\b', raw_text):
         reasons.append("강수(RA)")
 
     # 2) 바람 10KT 이상 검사 (예: 24012KT, 09015G25KT 등)
-    wind_matches = re.findall(r'\b\d{3}(\d{2,3})(?:G\d{2,3})?KT\b', raw_text)
-    max_wind = 0
-    for w in wind_matches:
-        speed = int(w)
-        if speed > max_wind:
-            max_wind = speed
-    if max_wind >= 10:
-        reasons.append(f"강풍({max_wind}KT)")
+    wind_speeds = []
+    for match in re.finditer(r'\b\d{3}(\d{2,3})(?:G(\d{2,3}))?KT\b', raw_text):
+        speed = int(match.group(1))
+        gust = int(match.group(2)) if match.group(2) else 0
+        wind_speeds.append(max(speed, gust))
+
+    if wind_speeds and max(wind_speeds) >= 10:
+        reasons.append(f"강풍({max(wind_speeds)}KT)")
 
     # 3) 구름 고도 500FT 이하 검사 (001 ~ 005)
-    cloud_matches = re.findall(r'\b(?:FEW|SCT|BKN|OVC)(\d{3})\b', raw_text)
-    min_height = 9999
-    for height_str in cloud_matches:
-        height = int(height_str) * 100
-        if height < min_height:
-            min_height = height
-    if min_height <= 500:
-        reasons.append(f"운저고도 저하({min_height}FT)")
+    cloud_heights = []
+    for match in re.finditer(r'\b(?:FEW|SCT|BKN|OVC)(\d{3})\b', raw_text):
+        height = int(match.group(1)) * 100
+        cloud_heights.append(height)
+
+    if cloud_heights and min(cloud_heights) <= 500:
+        reasons.append(f"운저고도 저하({min(cloud_heights)}FT)")
 
     return reasons
 
 
 def build_html_report():
-    """HTML 형태의 기상 브리핑 리포트 생성 (METAR 및 TAF 통합 검사 적용)"""
+    """HTML 형태의 기상 브리핑 리포트 생성 (METAR & TAF 통합 감지)"""
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     all_codes = []
@@ -140,7 +139,7 @@ def build_html_report():
     html_lines = [
         "<html><body>",
         f"<h2>✈️ 일일 항공기상 브리핑 ({now_utc} 기준)</h2>",
-        "<p style='color: gray;'>※ METAR 또는 TAF 상에서 비(RA), 바람 10KT 이상, 구름 고도 500FT 이하 조건 발생 시 빨간색으로 표시됩니다.</p>",
+        "<p style='color: gray;'>※ METAR 또는 TAF 상에서 비(RA), 바람 10KT 이상, 구름 고도 500FT 이하 조건 발생 시 빨간색으로 강조 표시됩니다.</p>",
         "<hr>"
     ]
 
