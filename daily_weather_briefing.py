@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-일일 항공기상 브리핑 자동 생성 및 이메일 발송 스크립트 (GitHub Actions용)
+일일 항공기상 브리핑 자동 생성 및 이메일 발송 스크립트 (METAR & TAF 통합 검사)
 """
 
 import os
@@ -90,38 +90,44 @@ def fetch_taf(icao_codes):
     return result
 
 
-def check_alert_conditions(metar_raw):
-    """METAR 텍스트에서 경고 조건(비, 바람 10KT 이상, 구름 500FT 이하) 검사"""
-    if not metar_raw or metar_raw == "자료 없음":
-        return False, []
+def parse_weather_text(raw_text):
+    """
+    기상 텍스트(METAR/TAF)에서 비(RA), 강풍(>=10KT), 운저고도(<=500FT) 조건 검사
+    """
+    if not raw_text or raw_text == "자료 없음":
+        return []
 
     reasons = []
 
-    # 1) RA (비) 포함 여부
-    if re.search(r'\b(?:\+|\-)?(?:[A-Z]*)*RA\b', metar_raw):
+    # 1) RA (비) 포함 여부 (+, -, SHRA, TSRA 등)
+    if re.search(r'\b(?:\+|\-)?(?:[A-Z]*)*RA\b', raw_text):
         reasons.append("강수(RA)")
 
-    # 2) 바람 10KT 이상 검사
-    wind_match = re.search(r'\b\d{3}(\d{2,3})(?:G\d{2,3})?KT\b', metar_raw)
-    if wind_match:
-        speed = int(wind_match.group(1))
-        if speed >= 10:
-            reasons.append(f"강풍({speed}KT)")
+    # 2) 바람 10KT 이상 검사 (예: 24012KT, 09015G25KT 등)
+    wind_matches = re.findall(r'\b\d{3}(\d{2,3})(?:G\d{2,3})?KT\b', raw_text)
+    max_wind = 0
+    for w in wind_matches:
+        speed = int(w)
+        if speed > max_wind:
+            max_wind = speed
+    if max_wind >= 10:
+        reasons.append(f"강풍({max_wind}KT)")
 
-    # 3) 구름 고도 500FT 이하 검사
-    cloud_matches = re.findall(r'\b(?:FEW|SCT|BKN|OVC)(\d{3})\b', metar_raw)
+    # 3) 구름 고도 500FT 이하 검사 (001 ~ 005)
+    cloud_matches = re.findall(r'\b(?:FEW|SCT|BKN|OVC)(\d{3})\b', raw_text)
+    min_height = 9999
     for height_str in cloud_matches:
         height = int(height_str) * 100
-        if height <= 500:
-            reasons.append(f"운저고도 저하({height}FT)")
-            break
+        if height < min_height:
+            min_height = height
+    if min_height <= 500:
+        reasons.append(f"운저고도 저하({min_height}FT)")
 
-    is_alert = len(reasons) > 0
-    return is_alert, reasons
+    return reasons
 
 
 def build_html_report():
-    """HTML 형태의 기상 브리핑 리포트 생성"""
+    """HTML 형태의 기상 브리핑 리포트 생성 (METAR 및 TAF 통합 검사 적용)"""
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     all_codes = []
@@ -134,7 +140,7 @@ def build_html_report():
     html_lines = [
         "<html><body>",
         f"<h2>✈️ 일일 항공기상 브리핑 ({now_utc} 기준)</h2>",
-        "<p style='color: gray;'>※ 빨간색 표시는 비(RA), 바람 10KT 이상, 또는 구름 고도 500FT 이하 조건 발생 공항입니다.</p>",
+        "<p style='color: gray;'>※ METAR 또는 TAF 상에서 비(RA), 바람 10KT 이상, 구름 고도 500FT 이하 조건 발생 시 빨간색으로 표시됩니다.</p>",
         "<hr>"
     ]
 
@@ -147,11 +153,19 @@ def build_html_report():
             metar_text = m.get("rawOb", "자료 없음") if m else "자료 없음"
             taf_text = t.get("rawTAF", "자료 없음") if t else "자료 없음"
 
-            is_alert, alert_reasons = check_alert_conditions(metar_text)
+            # METAR 및 TAF 각각 검사
+            metar_reasons = parse_weather_text(metar_text)
+            taf_reasons = parse_weather_text(taf_text)
 
-            if is_alert:
-                reasons_str = ", ".join(alert_reasons)
-                header = f"<b style='color: red;'>🚨 {name_kr} ({icao}) - [주의: {reasons_str}]</b>"
+            alert_tags = []
+            if metar_reasons:
+                alert_tags.append(f"METAR({', '.join(metar_reasons)})")
+            if taf_reasons:
+                alert_tags.append(f"TAF({', '.join(taf_reasons)})")
+
+            if alert_tags:
+                summary_str = " | ".join(alert_tags)
+                header = f"<b style='color: red;'>🚨 {name_kr} ({icao}) - [주의: {summary_str}]</b>"
             else:
                 header = f"<b>{name_kr} ({icao})</b>"
 
@@ -170,7 +184,6 @@ def build_html_report():
 def send_email(subject, html_body):
     """네이버 SMTP 서버를 통한 이메일 발송"""
     SENDER_EMAIL = "hong_e80@naver.com"
-    # GitHub Secrets에 저장된 암호화 비밀번호를 읽어옵니다.
     APP_PASSWORD = os.environ.get("NAVER_APP_PASSWORD", "FJCK2HM8TL2L")
     RECEIVER_EMAIL = "honge80@flyasiana.com"
 
