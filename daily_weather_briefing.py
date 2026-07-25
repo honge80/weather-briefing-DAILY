@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-일일 항공기상 브리핑 자동 생성 및 이메일 발송 스크립트 (완벽한 기상 파싱 적용)
+일일 항공기상 브리핑 자동 생성 및 이메일 발송 스크립트 (METAR & TAF 정밀 검사)
 """
 
 import os
@@ -93,7 +93,7 @@ def fetch_taf(icao_codes):
 def parse_weather_text(raw_text):
     """
     METAR / TAF 문장 전체에서 위험 요소를 감지하는 정밀 파서
-    - 비/소나기/뇌우 (RA, SHRA, TSRA, TS 등)
+    - 비/소나기/뇌우 (RA, SHRA, TSRA, TS, SH 등)
     - 강풍 및 돌풍 (평균 풍속 또는 돌풍이 10KT 이상)
     - 낮은 운저고도 (500FT 이하: 001 ~ 005)
     """
@@ -103,7 +103,6 @@ def parse_weather_text(raw_text):
     reasons = []
 
     # 1) 강수 및 뇌우 검사 (RA, TS, SH 포함 여부)
-    # TSRA, +SHRA, -RA, TS, SH 등 다양한 조합 감지
     if re.search(r'(?:RA|TS|SH)', raw_text):
         if "TS" in raw_text:
             reasons.append("뇌우/강수(TS/RA)")
@@ -111,7 +110,6 @@ def parse_weather_text(raw_text):
             reasons.append("강수(RA)")
 
     # 2) 바람 및 돌풍(G) 10KT 이상 검사
-    # 예: 34010KT, 34022G32KT, 30030G40KT 등에서 숫자를 모두 수집
     wind_matches = re.findall(r'(\d{3})(\d{2,3})(?:G(\d{2,3}))?KT', raw_text)
     max_wind = 0
     for direction, speed, gust in wind_matches:
@@ -125,7 +123,6 @@ def parse_weather_text(raw_text):
         reasons.append(f"강풍({max_wind}KT)")
 
     # 3) 구름 고도 500FT 이하 검사 (001 ~ 005)
-    # FEW010CB, SCT020, FEW004 등에서 001~005 감지
     cloud_matches = re.findall(r'(?:FEW|SCT|BKN|OVC)(\d{3})', raw_text)
     min_height = 9999
     for height_str in cloud_matches:
@@ -136,7 +133,7 @@ def parse_weather_text(raw_text):
     if min_height <= 500:
         reasons.append(f"운저고도 저하({min_height}FT)")
 
-    return list(dict.fromkeys(reasons))  # 중복 제거 후 반환
+    return list(dict.fromkeys(reasons))
 
 
 def build_html_report():
@@ -152,7 +149,7 @@ def build_html_report():
 
     html_lines = [
         "<html><body>",
-        f"<h2>✈️ 일일 항공기상 브리핑 ({now_utc} 기준)</h2>",
+        f"<h2>✈️ 일일 항공기상 브리핑 [v2.0 최신판] ({now_utc} 기준)</h2>",
         "<p style='color: gray;'>※ METAR 또는 TAF 상에서 비/뇌우, 바람 10KT 이상, 구름 고도 500FT 이하 조건 발생 시 빨간색으로 강조 표시됩니다.</p>",
         "<hr>"
     ]
@@ -219,7 +216,7 @@ if __name__ == "__main__":
     report_html = build_html_report()
 
     kst_now = datetime.now(timezone(timedelta(hours=9)))
-    email_subject = f"[항공기상] 일일 브리핑 리포트 ({kst_now.strftime('%Y-%m-%d %H:%M KST')})"
+    email_subject = f"[항공기상 v2.0] 일일 브리핑 리포트 ({kst_now.strftime('%Y-%m-%d %H:%M KST')})"
 
     print("2. 이메일 발송 중...")
     send_email(email_subject, report_html)
