@@ -4,13 +4,13 @@ on:
   schedule:
     # UTC 기준 21:00 (한국시간 06:00), UTC 기준 06:00 (한국시간 15:00) 실행
     - cron: '0 21,6 * * *'
-  workflow_dispatch: # 수동 실행 버튼 허용
+  workflow_dispatch: # 수동 실행 허용
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 코드 체크아웃
+      - name: 코드 가져오기
         uses: actions/checkout@v4
 
       - name: 파이썬 설치
